@@ -18,7 +18,7 @@
 ```bash
 # 克隆项目
 git clone https://github.com/ACaiSec/EVMReadableTrace.git
-cd ReadableTrace
+cd EVMReadableTrace
 
 # 安装依赖
 pip install -r requirements.txt
