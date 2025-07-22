@@ -46,6 +46,7 @@ class EVMTraceParser:
             raise ValueError("请提供 Etherscan API 密钥，通过参数或环境变量 ETHERSCAN_API_KEY")
         
         self.contract_cache: Dict[str, ContractInfo] = {}
+        self.current_tx_hash: Optional[str] = None  # 当前处理的交易哈希
         
         # 从环境变量读取 RPC 接口配置
         self.rpc_urls = {
@@ -58,7 +59,13 @@ class EVMTraceParser:
         self.chain_ids = {
             "ETH": 1,
             "BSC": 56,
-            "POLYGON": 137
+            "POLYGON": 137,
+            "BASE": 8453,
+            "AVAX": 43114,
+            "FANTOM": 250,
+            "ARBITRUM": 42161,
+            "OPTIMISM": 10,
+            "GNOSIS": 100,
         }
         
         # 从环境变量读取请求控制参数
@@ -70,7 +77,7 @@ class EVMTraceParser:
         # 从环境变量读取缓存和输出配置
         self.enable_cache = os.getenv('ENABLE_CACHE', 'true').lower() == 'true'
         self.cache_dir = os.getenv('CACHE_DIR', 'source_code')
-        self.output_dir = os.getenv('OUTPUT_DIR', 'docs')
+        self.output_dir = os.getenv('OUTPUT_DIR', 'trace')
     
     def _wait_for_rate_limit(self):
         """控制请求频率"""
@@ -152,10 +159,32 @@ class EVMTraceParser:
         except Exception as e:
             raise Exception(f"获取 trace 数据失败: {e}")
     
+    def get_main_contract_from_trace(self, trace_data: Dict) -> str:
+        """从 trace 数据中提取主要合约地址"""
+        result = trace_data.get("result", [])
+        if result and len(result) > 0:
+            first_trace = result[0]
+            action = first_trace.get("action", {})
+            # 优先使用 to 地址，如果是 CREATE 类型则使用 result 中的 address
+            to_address = action.get("to", "")
+            if to_address:
+                return to_address
+            # CREATE 类型的合约
+            trace_result = first_trace.get("result", {})
+            created_address = trace_result.get("address", "")
+            if created_address:
+                return created_address
+        # 如果无法提取，使用默认值
+        return "unknown"
+    
     def save_trace_to_file(self, trace_data: Dict, output_file: Optional[str] = None):
         """保存 trace 数据到文件"""
         if output_file is None:
-            output_file = f"{self.output_dir}/trace.json"
+            # 从 trace 数据中提取主要合约地址
+            main_contract = self.get_main_contract_from_trace(trace_data)
+            address_prefix = main_contract.lower().replace('0x', '')[:8] if main_contract != "unknown" else "unknown"
+            contract_dir = f"{self.output_dir}/0x{address_prefix}"
+            output_file = f"{contract_dir}/trace.json"
             
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         
@@ -200,7 +229,7 @@ class EVMTraceParser:
             
             # 保存源代码
             if source_code:
-                self.save_source_code(contract_name, source_code)
+                self.save_source_code(contract_name, source_code, address)
             
             # 解析 ABI
             functions = {}
@@ -227,16 +256,26 @@ class EVMTraceParser:
             print(f"获取合约信息异常 {address}: {e}")
             return None
     
-    def save_source_code(self, contract_name: str, source_code: str):
+    def save_source_code(self, contract_name: str, source_code: str, contract_address: str):
         """保存源代码到文件"""
         if not self.enable_cache:
             return
         
-        os.makedirs(self.cache_dir, exist_ok=True)
+        # 根据当前交易哈希或合约地址创建目录前缀
+        if self.current_tx_hash:
+            # 使用交易哈希的前8位作为目录前缀（不包括0x）
+            tx_prefix = self.current_tx_hash.lower().replace('0x', '')[:8]
+            contract_dir = f"{self.cache_dir}/0x{tx_prefix}"
+        else:
+            # 如果没有交易哈希，回退使用合约地址前缀
+            address_prefix = contract_address.lower().replace('0x', '')[:8]
+            contract_dir = f"{self.cache_dir}/0x{address_prefix}"
+        
+        os.makedirs(contract_dir, exist_ok=True)
         
         # 清理文件名
         safe_name = re.sub(r'[^\w\-_\.]', '_', contract_name)
-        filename = f"{self.cache_dir}/{safe_name}.txt"
+        filename = f"{contract_dir}/{safe_name}.txt"
         
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(source_code)
@@ -505,26 +544,42 @@ class EVMTraceParser:
         
         return formatted_lines
     
-    def parse_local_trace_file(self, input_file: Optional[str] = None, chain: str = "BSC", include_static_call: bool = True) -> str:
-        """解析本地 trace 文件"""
+    def parse_local_trace_file(self, input_file: Optional[str] = None, chain: str = "BSC", include_static_call: bool = True, tx_hash: Optional[str] = None) -> Tuple[str, Optional[str]]:
+        """解析本地 trace 文件，返回解析结果和主要合约地址"""
         try:
             if input_file is None:
                 input_file = f"{self.output_dir}/trace.json"
+            
+            # 如果提供了交易哈希，设置为当前交易哈希（用于源代码文件组织）
+            if tx_hash:
+                self.current_tx_hash = tx_hash
+            else:
+                # 清空当前交易哈希，这样会回退使用合约地址前缀
+                self.current_tx_hash = None
                 
             with open(input_file, 'r', encoding='utf-8') as f:
                 trace_data = json.load(f)
             
             print(f"正在解析本地 trace 文件: {input_file}")
+            
+            # 提取主要合约地址
+            main_contract = self.get_main_contract_from_trace(trace_data)
+            
             formatted_lines = self.parse_trace(trace_data, chain, include_static_call)
-            return "\n".join(formatted_lines)
+            return "\n".join(formatted_lines), main_contract
             
         except Exception as e:
-            return f"解析文件时出错: {e}"
+            return f"解析文件时出错: {e}", None
     
-    def save_to_file(self, content: str, output_dir: Optional[str] = None) -> str:
+    def save_to_file(self, content: str, contract_address: Optional[str] = None, output_dir: Optional[str] = None) -> str:
         """保存结果到文件"""
         if output_dir is None:
-            output_dir = self.output_dir
+            if contract_address:
+                # 根据合约地址创建子目录
+                address_prefix = contract_address.lower().replace('0x', '')[:8]
+                output_dir = f"{self.output_dir}/0x{address_prefix}"
+            else:
+                output_dir = self.output_dir
             
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"readableTrace{timestamp}.txt"
@@ -541,21 +596,30 @@ class EVMTraceParser:
         """处理完整的交易流程"""
         print(f"正在获取 {chain} 链上交易 {tx_hash} 的 trace 数据...")
         
+        # 0. 设置当前交易哈希，用于源代码文件的目录组织
+        self.current_tx_hash = tx_hash
+        
         # 1. 获取 trace 数据
         trace_data = self.get_trace_from_rpc(chain, tx_hash)
         
-        # 2. 保存 trace 数据
-        self.save_trace_to_file(trace_data)
-        print("trace 数据已保存到 docs/trace.json")
+        # 2. 提取主要合约地址
+        main_contract = self.get_main_contract_from_trace(trace_data)
         
-        # 3. 解析 trace 数据
+        # 3. 保存 trace 数据
+        self.save_trace_to_file(trace_data)
+        print(f"trace 数据已保存到 trace/0x{main_contract.lower().replace('0x', '')[:8]}/trace.json")
+        
+        # 4. 解析 trace 数据
         print("正在解析 trace 数据...")
         formatted_lines = self.parse_trace(trace_data, chain, include_static_call)
         result = "\n".join(formatted_lines)
         
-        # 4. 保存解析结果
-        output_file = self.save_to_file(result)
+        # 5. 保存解析结果
+        output_file = self.save_to_file(result, main_contract)
         print(f"解析结果已保存到: {output_file}")
+        
+        # 6. 重置当前交易哈希
+        self.current_tx_hash = None
         
         return result
 
@@ -603,16 +667,36 @@ def main():
         except Exception as e:
             print(f"处理失败: {e}")
     else:
-        # 检查是否存在本地 trace.json 文件
-        trace_file = f"{parser.output_dir}/trace.json"
-        if os.path.exists(trace_file):
-            print("发现本地 trace.json 文件，将进行解析...")
+        # 检查是否存在本地 trace.json 文件（先检查新格式，再检查旧格式）
+        # 新格式：在各个子目录中查找 trace.json
+        trace_found = False
+        trace_file = None
+        
+        if os.path.exists(parser.output_dir):
+            for item in os.listdir(parser.output_dir):
+                item_path = os.path.join(parser.output_dir, item)
+                if os.path.isdir(item_path) and item.startswith('0x'):
+                    potential_trace = os.path.join(item_path, 'trace.json')
+                    if os.path.exists(potential_trace):
+                        trace_file = potential_trace
+                        trace_found = True
+                        break
+        
+        # 检查旧格式（向后兼容）
+        if not trace_found:
+            old_trace_file = f"{parser.output_dir}/trace.json"
+            if os.path.exists(old_trace_file):
+                trace_file = old_trace_file
+                trace_found = True
+        
+        if trace_found:
+            print(f"发现本地 trace.json 文件: {trace_file}，将进行解析...")
             try:
                 # 解析本地文件
-                result = parser.parse_local_trace_file(None, args.chain, args.static_call)
+                result, main_contract = parser.parse_local_trace_file(trace_file, args.chain, args.static_call)
                 
                 # 保存结果
-                output_file = parser.save_to_file(result)
+                output_file = parser.save_to_file(result, main_contract)
                 print(f"解析完成！结果已保存到: {output_file}")
                 
                 # 显示部分结果
@@ -628,7 +712,7 @@ def main():
                 print(f"解析失败: {e}")
         else:
             print("未发现本地 trace.json 文件")
-            print("请使用 -t/--tx 参数提供交易哈希，或确保 docs/trace.json 文件存在")
+            print("请使用 -t/--tx 参数提供交易哈希，或确保 trace 目录中存在 trace.json 文件")
             print("使用示例:")
             print("  python3 main.py -s")
             print("  python3 main.py -t 0x2d9c1a00cf3d2fda268d0d11794ad2956774b156355e16441d6edb9a448e5a99")
