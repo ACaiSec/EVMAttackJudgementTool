@@ -6,6 +6,8 @@ dist/
 wheels/
 *.egg-info
 
+
+
 # Virtual environments
 .venv
 
@@ -15,5 +17,9 @@ wheels/
 .specstory/
 requirements/
 backup/
-docs/*
+trace/*
 source_code/*
+
+# Other
+.DS_Store
+.cursorindexingignore
