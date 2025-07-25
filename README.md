@@ -93,16 +93,16 @@ AttackJudgmentTool/
 
 每次分析会在 `./trace/<txHash>/` 目录下生成：
 
-1. **trace.json** - 原始 RPC trace 数据 (30KB)
+1. **trace.json** - 原始 RPC trace 数据 
    - 包含完整的EVM执行追踪信息
    - JSON格式的原始调用数据
 
-2. **readableTrace.txt** - 人类可读的trace解析 (3-4KB)  
+2. **readableTrace.txt** - 人类可读的trace解析
    - 按层级展示的函数调用关系
    - 智能解码的参数和返回值
    - 清晰的合约交互流程
 
-3. **analysisResult.txt** - AI攻击判断结果 (1-2KB)
+3. **analysisResult.txt** - AI攻击判断结果
    - 基于Workflow5的智能分析结论
    - 结构化的攻击/非攻击判定报告
    - 详细的技术分析和风险评估
@@ -120,16 +120,7 @@ AttackJudgmentTool/
 
 
 
-## 🐛 常见问题
 
-### Q: 如何获取 Etherscan API 密钥？
-A: 访问 [Etherscan.io](https://etherscan.io/apis) 注册账户并创建 API 密钥。
-
-### Q: 支持哪些区块链网络？
-A: 目前支持 Ethereum、BSC、Polygon，可以通过修改 RPC 配置添加更多网络。
-
-### Q: 如何自定义配置？
-A: 复制 `env.example` 为 `.env` 文件，然后修改其中的配置项。所有配置都有合理的默认值，只需要设置 `ETHERSCAN_API_KEY` 即可开始使用。
 
 ## 📄 许可证
 
