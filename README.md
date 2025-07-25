@@ -17,8 +17,8 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/ACaiSec/EVMReadableTrace.git
-cd EVMReadableTrace
+git clone https://github.com/ACaiSec/EVMAttackJudgementTool.git
+cd EVMAttackJudgementTool
 
 # 安装依赖
 pip install -r requirements.txt
